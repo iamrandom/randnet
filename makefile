@@ -1,6 +1,6 @@
 
 
-MODE=64
+MODE=32
 
 
 CC= gcc -g -m$(MODE) -std=c11  -O0 -Wall -fmessage-length=0  -DATOMIC_C11 -fno-omit-frame-pointer
@@ -19,13 +19,13 @@ O_FILES = $(foreach dd, $(C_SRC_FILES), $(subst .c,.o,$(dd)))
 	$(CC) -c $^ -o $@ $(INCLUDE)
 
 %.exe:  %.o
-	$(CC)  -o $@ $^  -L.  -lnet_service -lws2_32 -lmswsock
+	$(CC)  -o $@ $^  -L.  -lnet_service -lws2_32 -lmswsock -lpthread
 
 test/clients: $(O_FILES) test/clients.o
-	$(CC) $^ -o $@ -L. -lnet_service -ldl -lrt 
+	$(CC) $^ -o $@ -L. -lnet_service -ldl -lrt  -lpthread
 
 test/server: $(O_FILES) test/server.o
-	$(CC) $^ -o $@  -L. -lnet_service -ldl -lrt 
+	$(CC) $^ -o $@  -L. -lnet_service -ldl -lrt -lpthread
 
 libnet_service.a: $(O_FILES)
 	ar rcs $@ $^
@@ -43,5 +43,4 @@ linux:
 
 .PHONY : clean
 clean:
-	rm -f $(O_FILES) libnet_service.a
-	rm -f test/*.exe test/*.o  test/clients test/server
+	rm -f $(O_FILES) libnet_service.a test/*.exe test/*.o  test/clients test/server
