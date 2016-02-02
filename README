@@ -1,0 +1,17 @@
+Introduction
+
+	randnet means random's net lib.
+	You only need to know how to use the api of net_service.h.
+
+Implement
+
+	net_atomic use atomic op and memeory fence without lock, so need c++11 or c11. You'd better use g++4.7 + (c++11) or gcc4.9 + (c11). MODE in makefile you can set 32 or 64 by you gcc mode version.You can replace other implement of net_atmoic.h.
+
+	I finish iocp in windows and epoll in linux. other need your help to implement, I am too lazy.
+
+	the things net doing is that, read the msg from net into buff, and user get msg from buff; user write msg to buff, and send msg to net from buff. The buff is a FIFO array[][], and is thread safe. 
+
+
+Example:
+	
+	test/server.c and test clients.c
