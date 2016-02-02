@@ -8,7 +8,7 @@
 #ifndef BUFF_H_
 #define BUFF_H_
 
-// buff pool for single thread use
+// buff pool for sinwgle thread use
 #include <stdint.h>
 #include "buff_pool.h"
 

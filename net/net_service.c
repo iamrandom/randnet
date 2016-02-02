@@ -15,7 +15,7 @@
 #include "buff.h"
 #include "net_service.h"
 
-#ifdef _WIN32_WINNT
+#if defined(WIN32_) || defined(_WIN32_WINNT)
 #define NET_WIN
 #endif
 
