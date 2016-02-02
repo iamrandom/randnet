@@ -171,7 +171,7 @@ release_net_service(struct net_service* service)
 
 }
 
-struct net_service*
+NET_API struct net_service*
 net_create(int size)
 {
 	struct net_service* service;
@@ -361,7 +361,7 @@ create_net_session()
 }
 
 
-int
+NET_API int
 net_socket_size(struct net_service* service)
 {
 	int s = 0;
@@ -371,7 +371,7 @@ net_socket_size(struct net_service* service)
 	return s;
 }
 
-void
+NET_API void
 net_close(struct net_service* service)
 {
 	// clean all
@@ -436,7 +436,7 @@ push_queue_with_lock(struct net_service* service, net_socket nd, unsigned int ev
 
 #define r_min(a, b) (a) < (b) ? (a):(b)
 
-int
+NET_API int
 net_queue(struct net_service* service, struct net_event * events, int maxevents)
 {
 	unsigned int msg[128];
@@ -477,7 +477,7 @@ net_queue(struct net_service* service, struct net_event * events, int maxevents)
 }
 
 
-int
+NET_API int
 net_socket_cfg(struct net_service* service, net_socket nd, struct net_config* config)
 {
 	unsigned short index;
@@ -525,7 +525,7 @@ net_socket_cfg(struct net_service* service, net_socket nd, struct net_config* co
 	return ret;
 }
 
-param_type
+NET_API param_type
 net_socket_ctl(struct net_service* service, net_socket nd, param_type* data)
 {
 	unsigned short index;
@@ -558,7 +558,7 @@ net_socket_ctl(struct net_service* service, net_socket nd, param_type* data)
 	return oldData;
 }
 
-int
+NET_API int
 net_socket_read(struct net_service* service, net_socket nd, void* buff, int usize)
 {
 	unsigned short index;
@@ -588,7 +588,7 @@ net_socket_read(struct net_service* service, net_socket nd, void* buff, int usiz
 }
 
 
-int
+NET_API int
 net_socket_write(struct net_service* service, net_socket nd, const void* buff, int usize)
 {
 	unsigned short index;

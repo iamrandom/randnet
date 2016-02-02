@@ -448,7 +448,7 @@ handle_session(struct net_service* service, struct net_session* session, int eve
 	printf("%s:%d    %s %d\n", __FILE__, __LINE__, __FUNCTION__, index);\
 	fflush(stdout);
 
-int
+NET_API int
 net_wait(struct net_service* service, int timeout)
 {
 	int cnt;
@@ -529,7 +529,7 @@ create_listen_session(struct net_service* service, unsigned short port, unsigned
 	return lsession;
 }
 
-net_socket
+NET_API net_socket
 net_listen(struct net_service* service, unsigned short port, unsigned short listen_cnt)
 {
 	int listen_socket;
@@ -615,7 +615,7 @@ net_listen(struct net_service* service, unsigned short port, unsigned short list
 	return id;
 }
 
-net_socket
+NET_API net_socket
 net_accept(struct net_service* service, net_socket nd)
 {
 	unsigned short index;
@@ -663,7 +663,7 @@ net_accept(struct net_service* service, net_socket nd)
 	return id;
 }
 
-net_socket
+NET_API net_socket
 net_connect(struct net_service* service, const char* ip, unsigned short port)
 {
 	int connect_socket;
@@ -729,7 +729,7 @@ net_connect(struct net_service* service, const char* ip, unsigned short port)
 	return id;
 }
 
-void
+NET_API void
 net_socket_close(struct net_service* service, net_socket nd, char send_rest)
 {
 	unsigned short index;
@@ -791,7 +791,7 @@ net_socket_close(struct net_service* service, net_socket nd, char send_rest)
 
 
 #include <unistd.h>
-void
+NET_API void
 net_service_sleep(long ms)
 {
 	usleep(ms * 1000);

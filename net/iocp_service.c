@@ -239,7 +239,7 @@ post_listen(struct net_service* service, struct net_session* session, struct acc
 	return NO_ERROR;
 }
 
-net_socket
+NET_API net_socket
 net_listen(struct net_service* service, unsigned short port, unsigned short listen_cnt)
 {
 	ffid_vtype id;
@@ -370,187 +370,7 @@ handle_accept(struct net_service* service, int ret, int err, struct accept_sessi
 		push_queue_with_lock(service, session->id, Eve_Post_Listen_Error);
 	}
 }
-//
-//int
-//post__read(struct net_service* service, net_socket nd)
-//{
-//	unsigned short index;
-//	struct net_session* session;
-//	struct read_session* rsession;
-//	void* data;
-//	size_t size;
-//	int err;
-//
-//	size = 0;
-//	data = 0;
-//	if(nd == 0 || !service)
-//	{
-//		return -1;
-//	}
-//
-//	index = ffid_index(service->socket_ids, nd);
-//	net_lock(&service->session_lock[index]);
-//	session = service->sessions[index];
-//	if(!session || !session->rsession || session->id != nd)
-//	{
-//		net_unlock(&service->session_lock[index]);
-//		return -1;
-//	}
-//	rsession = session->rsession;
-//
-//	if(rsession->op == OP_NET_READ)
-//	{
-//		net_unlock(&service->session_lock[index]);
-//		return 0;
-//	}
-//
-//	for (;;)
-//	{
-//		size = recv_buff_prepare(rsession->rbuff, &data);
-//		if (size == 0)
-//		{
-//			push_queue(service, session, Eve_Read);
-//			net_unlock(&service->session_lock[index]);
-//			return 0;
-//		}
-//		err = recv(session->fd, (char*)data, (int)size, 0);
-//		recv_buff_consume(rsession->rbuff, err < 0? 0 : (size_t)err);
-//		if (err > 0)
-//		{
-//			push_queue(service, session, Eve_Read);
-//		}
-//		else if (err == 0)
-//		{
-//			// socket closed
-//			push_queue(service, session, Eve_Error);
-//			net_unlock(&service->session_lock[index]);
-//			return 0;
-//		}
-//		else
-//		{
-//			if (net_get_error() == WSAEWOULDBLOCK)
-//			{
-//				break;
-//			}
-//			push_queue(service, session, Eve_Error);
-//			net_unlock(&service->session_lock[index]);
-//			return 0;
-//		}
-//	}
-//
-//	rsession->op = OP_NET_READ;
-//	rsession->sm.op_type = OP_NET_READ;
-//	rsession->sm.data_buf.buf = 0;
-//	rsession->sm.data_buf.len = 0;
-//	rsession->sm.rc_bytes = 0;
-//	rsession->sm.flag = 0;
-//	net_unlock(&service->session_lock[index]);
-//
-//	if(WSARecv(
-//		session->fd, &rsession->sm.data_buf, 1,
-//		&rsession->sm.rc_bytes, &rsession->sm.flag,
-//		&rsession->sm.overlapped, 0)
-//	)
-//	{
-//		err = net_get_error();
-//		if(WSA_IO_PENDING != err)
-//		{
-//			net_lock(&service->session_lock[index]);
-//			session = service->sessions[index];
-//			if(session && session->id == nd && session->rsession)
-//			{
-//				rsession = session->rsession;
-//				rsession->op = OP_NET_NONE;
-//				rsession->sm.op_type = OP_NET_NONE;
-//				rsession->sm.data_buf.buf = 0;
-//				rsession->sm.data_buf.len = 0;
-//			}
-//			else
-//			{
-//				release_read_session(rsession);
-//			}
-//			net_unlock(&service->session_lock[index]);
-//			//
-//			return -1;
-//		}
-//	}
-//	return 0;
-//}
-//
-//int
-//post__write(struct net_service* service, net_socket nd)
-//{
-//	unsigned short index;
-//	struct net_session* session;
-//	struct write_session* wsession;
-//	void* data;
-//	size_t size;
-//	int err;
-//
-//	size = 0;
-//	data = 0;
-//	if(nd == 0 || !service)
-//	{
-//		return -1;
-//	}
-//
-//	index = ffid_index(service->socket_ids, nd);
-//	net_lock(&service->session_lock[index]);
-//	session = service->sessions[index];
-//	if(!session || !session->wsession || session->id != nd)
-//	{
-//		net_unlock(&service->session_lock[index]);
-//		return -1;
-//	}
-//
-//	wsession = session->wsession;
-//	if(wsession->op == OP_NET_WRITE)
-//	{
-//		net_unlock(&service->session_lock[index]);
-//		return 0;
-//	}
-//	size = send_buff_prepare(wsession->sbuff, &data);
-//	if(size == 0)
-//	{
-//		net_unlock(&service->session_lock[index]);
-//		return 0;
-//	}
-//	wsession->op = OP_NET_WRITE;
-//	wsession->sm.op_type = OP_NET_WRITE;
-//	wsession->sm.data_buf.buf = (char*)data;
-//	wsession->sm.data_buf.len = (unsigned long)size;
-//	wsession->sm.rc_bytes = 0;
-//	wsession->sm.flag = 0;
-//	net_unlock(&service->session_lock[index]);
-//
-//	if(WSASend(
-//		session->fd, &wsession->sm.data_buf, 1,
-//		&wsession->sm.rc_bytes, wsession->sm.flag, &wsession->sm.overlapped, 0)
-//	)
-//	{
-//		err = net_get_error();
-//		if(WSA_IO_PENDING != err)
-//		{
-//			net_lock(&service->session_lock[index]);
-//			session = service->sessions[index];
-//			if(session && session->id == nd && session->wsession)
-//			{
-//				wsession = session->wsession;
-//				wsession->op = OP_NET_NONE;
-//				wsession->sm.op_type = OP_NET_NONE;
-//				wsession->sm.data_buf.buf = 0;
-//				wsession->sm.data_buf.len = 0;
-//			}
-//			else
-//			{
-//				release_write_session(wsession);
-//			}
-//			net_unlock(&service->session_lock[index]);
-//			return -1;
-//		}
-//	}
-//	return 1;
-//}
+
 
 int
 post_read(struct net_service* service, struct net_session* session)
@@ -743,7 +563,7 @@ post_rest_write(struct net_service* service, struct write_session* wsession)
 }
 
 
-net_socket
+NET_API net_socket
 net_accept(struct net_service* service, net_socket fd)
 {
 	struct net_session* session;
@@ -940,7 +760,7 @@ FUN_CONNECTEX get_connect_ex_fun(NET_SOCKET s)
 	return lpfnConnectEx;
 }
 
-net_socket
+NET_API net_socket
 net_connect(struct net_service* service, const char* ip, unsigned short port)
 {
 	NET_SOCKET s;
@@ -1030,7 +850,7 @@ net_connect(struct net_service* service, const char* ip, unsigned short port)
 	return id;
 }
 
-int
+NET_API int
 net_wait(struct net_service* service, int timeout)
 {
 	int ret;
@@ -1147,7 +967,7 @@ net_wait(struct net_service* service, int timeout)
 #endif
 }
 
-void
+NET_API void
 net_socket_close(struct net_service* service, net_socket nd, char send_rest)
 {
 	unsigned short index;
@@ -1196,7 +1016,7 @@ net_socket_close(struct net_service* service, net_socket nd, char send_rest)
 }
 
 
-void
+NET_API void
 net_service_sleep(long ms)
 {
 	Sleep(ms);

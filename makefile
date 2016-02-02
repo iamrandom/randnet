@@ -10,7 +10,6 @@ CC := $(CPP)
 
 SRC_PATH = tool:net
 INCLUDE =
-LIB = 
 
 C_SRC_FILES = $(foreach dd,$(subst :, ,$(SRC_PATH)),$(wildcard $(dd)/*.c))
 O_FILES = $(foreach dd, $(C_SRC_FILES), $(subst .c,.o,$(dd)))
@@ -19,23 +18,30 @@ O_FILES = $(foreach dd, $(C_SRC_FILES), $(subst .c,.o,$(dd)))
 %.o:%.c
 	$(CC) -c $^ -o $@ $(INCLUDE)
 
-%.exe:  $(O_FILES) %.o
-	$(CC) $^ -o $@  $(LIB)
+%.exe:  %.o
+	$(CC)  -o $@ $^  -L.  -lnet_service -lws2_32 -lmswsock
 
 test/clients: $(O_FILES) test/clients.o
-	$(CC) $^ -o $@  $(LIB)
+	$(CC) $^ -o $@ -L. -lnet_service -ldl -lrt 
 
 test/server: $(O_FILES) test/server.o
-	$(CC) $^ -o $@  $(LIB)
+	$(CC) $^ -o $@  -L. -lnet_service -ldl -lrt 
+
+libnet_service.a: $(O_FILES)
+	ar rcs $@ $^
 
 mingw:
-	make LIB=" -lws2_32 -lmswsock  "  test/clients.exe test/server.exe
+	make libnet_service.a
+	make test/clients.exe
+	make test/server.exe
 
 linux:
-	make LIB="  -ldl -lrt  "  test/clients test/server
+	make libnet_service.a
+	make test/clients
+	make test/server
 	
 
 .PHONY : clean
 clean:
-	rm -f $(O_FILES)
+	rm -f $(O_FILES) libnet_service.a
 	rm -f test/*.exe test/*.o  test/clients test/server
