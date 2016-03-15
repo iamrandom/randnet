@@ -61,22 +61,40 @@ buff_gc_help(void** buffers, unsigned int pool_cnt, unsigned int buffer_size, un
 	return cnt;
 }
 
+
+#include "net_atomic.h"
+
+typedef void(*recv_release_fun)(struct recv_buff*);
+typedef size_t(*recv_prepare_fun)(struct recv_buff*, void** pdata);
+typedef int(*recv_consume_fun)(struct recv_buff*, size_t usize);
+typedef int(*recv_read_fun)(struct recv_buff*, void* buff, int usize);
+
 struct recv_buff
 {
 	void**					buffers;
+	int*					lens;		//only in vB
 	volatile unsigned int	write;
 	volatile unsigned int	read;
-	unsigned short			buffer_size;
+	unsigned short			buffer_size; //only in vB
 	unsigned short			pool_cnt;
 	unsigned short			freeH;
 	enum EnByteSize			en_byte;
 	net_atomic_flag			prep_flag;
 	struct buff_pool*		pool;
-	unsigned int			check;
+
+	unsigned int			check;		// check for a msg in vA, and a msg recv len in vB
+
+	//diff version fun
+	recv_release_fun		release_fun;
+	recv_prepare_fun		prepare_fun;
+	recv_consume_fun		consume_fun;
+	recv_read_fun			read_fun;
 };
 
+
+
 struct recv_buff*
-recv_buff_create(enum EnByteSize en_byte, unsigned short pool_cnt, struct buff_pool* pool)
+recv_buff_create_vA(enum EnByteSize en_byte, unsigned short pool_cnt, struct buff_pool* pool)
 {
 	struct recv_buff* buff;
 
@@ -107,7 +125,7 @@ recv_buff_create(enum EnByteSize en_byte, unsigned short pool_cnt, struct buff_p
 }
 
 void
-recv_buff_release(struct recv_buff* rbuff)
+recv_buff_release_vA(struct recv_buff* rbuff)
 {
 	unsigned short i;
 	acquire_memory_fence();
@@ -124,13 +142,13 @@ recv_buff_release(struct recv_buff* rbuff)
 
 
 char
-recv_buff_is_full(struct recv_buff* rbuff)
+recv_buff_is_full_vA(struct recv_buff* rbuff)
 {
 	return rbuff->write == rbuff->read;
 }
 
 size_t
-recv_buff_prepare(struct recv_buff* rbuff, void** pdata)
+recv_buff_prepare_vA(struct recv_buff* rbuff, void** pdata)
 {
 
 	unsigned int uRead;
@@ -277,7 +295,7 @@ recv_buff_check_new_msg(struct recv_buff* rbuff, unsigned int uWrite)
 }
 
 int
-recv_buff_consume(struct recv_buff* rbuff, size_t usize)
+recv_buff_consume_vA(struct recv_buff* rbuff, size_t usize)
 {
 	unsigned int uWrite;
 	unsigned int uHWrite;
@@ -308,7 +326,7 @@ recv_buff_consume(struct recv_buff* rbuff, size_t usize)
 
 
 int
-recv_buff_read(struct recv_buff* rbuff, void* buff, int usize)
+recv_buff_read_vA(struct recv_buff* rbuff, void* buff, int usize)
 {
 
 	unsigned int uRead;
@@ -399,6 +417,278 @@ recv_buff_read(struct recv_buff* rbuff, void* buff, int usize)
 //	buff_unlock(&rbuff->flag);
 	return (int)msg_size;
 }
+
+
+struct recv_buff*
+recv_buff_create_vB(enum EnByteSize en_byte, uint16_t pool_cnt, struct buff_pool* pool)
+{
+	struct recv_buff* queue;
+
+	assert(pool_cnt <= 0xefffu);
+	queue = (struct recv_buff*)malloc(sizeof(struct recv_buff));
+	if(!queue)
+	{
+		return 0;
+	}
+
+	queue->buffers = (void**)malloc(pool_cnt * sizeof(void*));
+	if(!queue->buffers)
+	{
+		free(queue);
+		return 0;
+	}
+	queue->lens = (int*)malloc(pool_cnt * sizeof(int));
+	if(!queue->lens)
+	{
+		free(queue->buffers);
+		free(queue);
+		return 0;
+	}
+	memset(queue->buffers, 0, sizeof(void*) * pool_cnt);
+	queue->freeH = pool_cnt;
+	queue->write = 0;
+	queue->read = ((unsigned int)pool_cnt);
+	queue->en_byte = en_byte;
+	queue->pool_cnt = pool_cnt;
+	queue->pool = pool;
+	queue->check = 0;
+	net_atomic_flag_clear(&queue->prep_flag);
+	memeory_fence();
+	return queue;
+}
+
+
+
+void
+recv_buff_release_vB(struct recv_buff* rbuff)
+{
+	unsigned short i;
+	acquire_memory_fence();
+	if(!rbuff) return;	
+	for(i = 0; i < rbuff->pool_cnt; ++i)
+	{
+		if(!rbuff->buffers[i]) continue;	
+		buff_pool_del_buff(rbuff->pool, rbuff->buffers[i], (size_t)rbuff->lens[i]);
+	}
+	free(rbuff->buffers);
+	free(rbuff->lens);
+	free(rbuff);
+	release_memory_fence();
+}
+
+
+size_t
+recv_buff_prepare_vB(struct recv_buff* rbuff, void** pdata)
+{
+	unsigned int uWrite;
+	unsigned int uRead;
+	unsigned int check;
+	unsigned int curWrite;
+	int msg_size;
+	char* pc;
+
+	if(!rbuff) return 0;
+	acquire_memory_fence();
+	uWrite = rbuff->write;
+	uRead = rbuff->read;
+	check = rbuff->check;
+	// is full?
+	if(uWrite == uRead) return 0;
+	curWrite = uWrite % rbuff->pool_cnt;
+	if(check < (unsigned int)rbuff->en_byte)
+	{
+		// read a msg size
+		pc = (char*)(rbuff->lens + curWrite);
+		*pdata = (void*)(pc + check);
+		return  (unsigned int)rbuff->en_byte - check;
+	}
+	else
+	{
+		// read a msg
+		msg_size = rbuff->lens[curWrite];
+		if (msg_size <= 0) return 0;
+		pc = (char*)rbuff->buffers[curWrite] + (check - (unsigned int)rbuff->en_byte);
+		*pdata = (void*)pc;
+		return (unsigned int)msg_size - (check - (unsigned int)rbuff->en_byte);
+	}
+	return 0;
+}
+
+
+
+int
+recv_buff_consume_vB(struct recv_buff* rbuff, size_t usize)
+{
+	unsigned int uWrite;
+	unsigned int check;
+	unsigned int curWrite;
+	unsigned int en_byte;
+	unsigned int msg_size;
+	unsigned char* pc;
+	void* msg_buff;
+	unsigned int i;
+	
+	if(!rbuff || !usize) return 0;
+	acquire_memory_fence();
+	uWrite = rbuff->write;
+	check = rbuff->check;
+	en_byte = (unsigned int)rbuff->en_byte;
+	curWrite = uWrite % rbuff->pool_cnt;
+	
+	
+	if(check < en_byte)
+	{
+		if( (check + usize) > en_byte )
+		{
+			return -1;
+		}
+		check += usize;
+		if(check == en_byte)
+		{
+			// comp the msg length
+			pc = (unsigned char*)(rbuff->lens + curWrite);
+			msg_size = 0;
+			for(i = 0; i < en_byte; ++i)
+			{
+				msg_size |= (pc[i]) << (i * 8);
+			}
+
+			if(((int)msg_size) < 0)
+			{
+				return enErr_Recv_MsgBig;
+			}
+			if(msg_size < en_byte)
+			{
+				return enErr_Recv_MsgSmall;
+			}
+			msg_size = msg_size - en_byte;
+			rbuff->lens[curWrite] = (int)msg_size;
+			msg_buff = buff_pool_new_buff(rbuff->pool, msg_size);
+			if(!msg_buff)
+			{
+				return enErr_NoMemory;
+			}
+			rbuff->buffers[curWrite] = msg_buff;
+		}
+		rbuff->check = check;
+	}
+	else
+	{
+		msg_size = (unsigned int)rbuff->lens[curWrite];
+		
+		if(msg_size < (check - en_byte + usize ) )
+		{
+			return enErr_Recv_MsgBig;
+		}
+		check += usize;
+		rbuff->check = check;
+		if((check - en_byte) == msg_size)
+		{
+			// a msg ok
+			uWrite = (uWrite + 1) % (2 * rbuff->pool_cnt);
+			rbuff->check = 0;
+			release_memory_fence();
+			rbuff->write = uWrite;
+			return 1;
+		}
+
+
+
+		rbuff->check = check;
+	}
+	return 0;
+}
+
+int
+recv_buff_read_vB(struct recv_buff* rbuff, void* buff, int usize)
+{
+	int msg_len;
+	unsigned int uRead;
+	unsigned int uHeight;
+
+	if(!rbuff || !buff || ((size_t)usize != sizeof(void*))) return 0;
+	acquire_memory_fence();
+	uRead = rbuff->read;
+	uHeight = (rbuff->write + rbuff->pool_cnt) % (2 * rbuff->pool_cnt);
+
+	if (uHeight == uRead)
+	{
+		// no message
+		return 0;
+	}
+	*((void**)buff) = rbuff->buffers[uRead % rbuff->pool_cnt];
+	msg_len = rbuff->lens[uRead % rbuff->pool_cnt];
+
+	rbuff->lens[uRead % rbuff->pool_cnt] = 0;
+	rbuff->buffers[uRead % rbuff->pool_cnt] = 0;
+
+	uRead = (uRead + 1) % (2 * rbuff->pool_cnt);	
+
+	release_memory_fence();
+	rbuff->read = uRead;
+
+	return msg_len;
+}
+
+struct recv_buff*	
+recv_buff_create(enum EnByteSize en_byte, uint16_t pool_cnt, struct buff_pool* pool, int Version)
+{
+	struct recv_buff* rbuff;
+	switch(Version)
+	{
+
+	case RECV_BUFF_USE_QUEUE:
+		rbuff = recv_buff_create_vB(en_byte, pool_cnt, pool);
+		if(rbuff)
+		{
+			rbuff->release_fun = recv_buff_release_vB;
+			rbuff->prepare_fun = recv_buff_prepare_vB;
+			rbuff->consume_fun = recv_buff_consume_vB;
+			rbuff->read_fun = recv_buff_read_vB;
+		}
+		break;
+	case RECV_BUFF_USE_BUFF:
+	default:
+		rbuff = recv_buff_create_vA(en_byte, pool_cnt, pool);
+		if(rbuff)
+		{
+			rbuff->release_fun = recv_buff_release_vA;
+			rbuff->prepare_fun = recv_buff_prepare_vA;
+			rbuff->consume_fun = recv_buff_consume_vA;
+			rbuff->read_fun = recv_buff_read_vA;
+		}
+		break;
+	}
+	return rbuff;
+}
+
+void				
+recv_buff_release(struct recv_buff* rbuff)
+{
+	return rbuff->release_fun(rbuff);
+}
+
+size_t				
+recv_buff_prepare(struct recv_buff* rbuff, void** pdata)
+{
+	return rbuff->prepare_fun(rbuff, pdata);
+}
+
+int					
+recv_buff_consume(struct recv_buff* rbuff, size_t usize)
+{
+	return rbuff->consume_fun(rbuff, usize);
+}
+
+int					
+recv_buff_read(struct recv_buff* rbuff, void* buff, int usize)
+{
+	return rbuff->read_fun(rbuff, buff, usize);
+}
+
+
+
+
 
 struct send_buff
 {
@@ -541,7 +831,7 @@ send_buff_consume(struct send_buff* sbuff, size_t usize)
 	sbuff->read = uHRead << 16 | uLRead;
 }
 
-
+#include <stdio.h>
 int
 send_buff_write(struct send_buff* sbuff, const void* pdata, int size)
 {
@@ -561,6 +851,16 @@ send_buff_write(struct send_buff* sbuff, const void* pdata, int size)
 	unsigned char uc;
 	struct buff_pool*	pool;
 	unsigned int usize;
+
+	if(size < 0) return 0;
+	usize = size;
+	i = sbuff->en_byte;
+	while( i > 0)
+	{
+		usize >>= 8;
+		--i;
+	}
+	if(usize > 0) return 0;
 
 	usize = size;
 	bf = 0;
@@ -864,8 +1164,11 @@ msg_buff_size(struct msg_buff* mbuff)
 
 	return write_size;
 
-
 }
+
+
+
+
 
 #endif /* BUFF_C_ */
 

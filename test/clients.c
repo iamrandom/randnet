@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <time.h>
 #include <string.h>
+#include "../net/net_atomic.h"
 #include "../net/buff.h"
 #include "../net/net_service.h"
 
@@ -27,27 +28,55 @@ thread_run(void* param)
 	return 0;
 }
 
-void handle_client_read(struct net_service* ns, net_socket nd)
+void handle_client_read(struct net_service* ns, net_socket nd, int v)
 {
 	char buff[1024];
 	int ret;
+	char* pMsg;
 
-	while((ret = net_socket_read(ns, nd, buff, sizeof(buff)/sizeof(buff[0]))) > 0)
+
+	if(v == RECV_BUFF_USE_BUFF)
 	{
-		if(ret < (int)(sizeof(buff)/sizeof(buff[0])) )
+		while((ret = net_socket_read(ns, nd, buff, sizeof(buff)/sizeof(buff[0]))) > 0)
 		{
-			buff[ret] = 0;
-			// printf("recv msg %s\n", buff);
-			++msg_recv_count;
-			if( net_socket_write(ns, nd, buff, ret) > 0)
+			if(ret < (int)(sizeof(buff)/sizeof(buff[0])) )
 			{
-				++msg_send_count;
+				// printf("recv msg %s\n", buff);
+				++msg_recv_count;
+				if( net_socket_write(ns, nd, buff, ret) > 0)
+				{
+					++msg_send_count;
+				}
+			}
+			else
+			{
+				// create lager buff，read again
+				break;
 			}
 		}
-		else
+	}
+
+	else if (v == RECV_BUFF_USE_QUEUE)
+	{
+
+		pMsg = 0;
+		while((ret = net_socket_read(ns, nd, (void*)&pMsg, sizeof(pMsg))))
 		{
-			// create lager buff，read again
-			break;
+			if(ret > 0)
+			{
+				// printf("recv msg %s\n", pMsg);
+				++msg_recv_count;
+				if( net_socket_write(ns, nd, pMsg, ret) > 0)
+				{
+					++msg_send_count;
+				}
+				free(pMsg);
+			}
+			else
+			{
+				// create lager buff，read again
+				break;
+			}
 		}
 	}
 }
@@ -68,6 +97,8 @@ int main(int argc, char** argv)
 	int count;
 	param_type parm;
 	char bf[1024];
+	int clients_cnt;
+
 
 	srand((unsigned)time(NULL));
 
@@ -93,22 +124,33 @@ int main(int argc, char** argv)
 
 	count = 0;
 
+	clients_cnt = 0;
+
+	int v  = RECV_BUFF_USE_QUEUE;
+
 	while(1)
 	{
+		net_wait(ns, 0);
 		ret = net_queue(ns, events, sizeof(events)/sizeof(events[0]));
 		if(ret < 0)
 		{
 			break;
 		}
+
 		if(ret == 0)
 		{
-			net_service_sleep(10);
-			++count;
 			
-			if(!net_connect(ns, "127.0.0.1", 9522))
+
+			net_thread_sleep(10);
+			++count;
+
+			// if(clients_cnt > 0) continue;
+			++clients_cnt;
+			
+			if(!net_connect(ns, "127.0.0.1", 9524))
 			{
 				// printf("connect error\n");
-				fflush(stdout);
+				// fflush(stdout);
 			}
 			
 			if(count % 100 == 0)
@@ -138,6 +180,7 @@ int main(int argc, char** argv)
 				cfg.read_buff_cnt = 8;
 				cfg.write_buff_cnt = 8;
 				cfg.pool = pool;
+				cfg.read_buff_version = v;
 
 				if(net_socket_cfg(ns, events[i].nd, &cfg) < 0)
 				{
@@ -167,7 +210,7 @@ int main(int argc, char** argv)
 				{
 					++parm;
 					net_socket_ctl(ns, events[i].nd, &parm);
-					handle_client_read(ns, events[i].nd);
+					handle_client_read(ns, events[i].nd, v);
 				}
 			}
 		}
@@ -177,6 +220,7 @@ int main(int argc, char** argv)
 	{
 		pthread_join(ts[i], &status);
 	}
+
 	net_close(ns);
 	buff_pool_release(pool);
 	return 0;

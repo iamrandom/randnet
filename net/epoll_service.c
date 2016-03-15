@@ -24,6 +24,7 @@
 #define Handle_socket_close 1 << 6
 #define EPOLLERR_EPOLLHUP 1 << 7
 #define WriteError 1 << 8
+ #define Handle_socket_consume_error 1 << 9
 
 #define OP_NET_READ				EPOLLIN
 #define OP_NET_WRITE 			EPOLLOUT
@@ -209,6 +210,14 @@ post_rest_read(struct net_service* service, struct net_session* session)
 			if(msgcnt > 0)
 			{
 				push_queue(service, session, Eve_Read);
+			}
+			else if(msgcnt < 0)
+			{
+				// error happend
+				print_error();
+				clean_epoll_op(service, session);
+				push_queue(service, session, Handle_socket_consume_error | Eve_Error);
+				return;
 			}
 		}
 		else if (err == 0)
@@ -454,6 +463,7 @@ net_wait(struct net_service* service, int timeout)
 	int cnt;
 	int wait_cnt;
 	int i;
+	int try_cnt;
 	ffid_vtype id;
 	struct epoll_event events[32];
 	struct net_session* session;
@@ -475,6 +485,7 @@ net_wait(struct net_service* service, int timeout)
 			index = ffid_index(service->socket_ids, id);
 
 			net_lock(&service->session_lock[index]);
+	
 			session = service->sessions[index];
 			if(!session || session->id != id)
 			{
@@ -787,14 +798,6 @@ net_socket_close(struct net_service* service, net_socket nd, char send_rest)
 	net_lock(&service->id_lock);
 	ffid_del_id(service->socket_ids, nd);
 	net_unlock(&service->id_lock);
-}
-
-
-#include <unistd.h>
-NET_API void
-net_service_sleep(long ms)
-{
-	usleep(ms * 1000);
 }
 
 

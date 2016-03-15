@@ -31,6 +31,7 @@ struct net_config
 	unsigned short			read_buff_cnt;					//your read buff of read_buff_cnt
 	unsigned short			write_buff_cnt;					//your write buff of write_buff_cnt
 	struct buff_pool*		pool;							//a buff pool
+	int						read_buff_version;				//read buff version, default RECV_BUFF_USE_BUFF
 };
 
 struct net_event
@@ -43,17 +44,17 @@ struct net_event
 
 #if defined(NET_BUILD_AS_DLL)
 
-#if defined(NET_CORE) || defined(NET_LIB)	
+#if defined(NET_CORE) || defined(NET_LIB)
 #define NET_API __declspec(dllexport)
-#else					
+#else
 #define NET_API __declspec(dllimport)
 #endif						
 
-#else				
+#else
 
 #define NET_API		extern
 
-#endif			
+#endif
 
 /**
 * creat a net_service
@@ -127,11 +128,7 @@ net_socket_ctl(struct net_service* service, net_socket nd, param_type* data);
 */
 NET_API int							
 net_socket_size(struct net_service* service);
-/**
-* sleep
-**/
-NET_API void						
-net_service_sleep(long ms);
+
 
 #endif /* NET_SERVICE_H_ */
 

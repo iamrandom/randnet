@@ -1,10 +1,10 @@
 
 
-MODE=32
+MODE=64
 
 
-CC= gcc -g -m$(MODE) -std=c11  -O0 -Wall -fmessage-length=0  -DATOMIC_C11 -fno-omit-frame-pointer
-CPP= g++ -g -m$(MODE) -std=c++11 -DATOMIC_CPP11 -O0 -Wall -fmessage-length=0 -fno-omit-frame-pointer
+CC= gcc -g -m$(MODE) -std=c11  -O0 -Wall -fmessage-length=0  -fno-omit-frame-pointer
+CPP= g++ -g -m$(MODE) -std=c++11 -O0 -Wall -fmessage-length=0 -fno-omit-frame-pointer
 CC := $(CPP)
 
 
@@ -29,6 +29,12 @@ test/server: $(O_FILES) test/server.o
 
 libnet_service.a: $(O_FILES)
 	ar rcs $@ $^
+
+
+
+test/buff_test.exe:test/buff_test.o net/buff.o net/buff_pool.o
+	$(CC)  -o $@ $^ 
+
 
 mingw:
 	make libnet_service.a

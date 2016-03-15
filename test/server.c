@@ -3,6 +3,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include "../net/net_atomic.h"
 #include "../net/buff.h"
 #include "../net/net_service.h"
 
@@ -22,23 +23,49 @@ thread_run(void* param)
 	return 0;
 }
 
-void handle_client_read(struct net_service* ns, net_socket nd)
+void handle_client_read(struct net_service* ns, net_socket nd, int v)
 {
 	char buff[1024];
 	int ret;
+	char* pMsg;
 
-	while((ret = net_socket_read(ns, nd, buff, sizeof(buff)/sizeof(buff[0]))) > 0)
+	
+
+	if (v == RECV_BUFF_USE_QUEUE)
 	{
-		if(ret < (int)(sizeof(buff)/sizeof(buff[0])) )
+		pMsg = 0;
+		while((ret = net_socket_read(ns, nd, (void*)&pMsg, sizeof(pMsg))))
 		{
-			buff[ret] = 0;
-			// printf("recv msg %s\n", buff);
-			net_socket_write(ns, nd, buff, ret);
+			if(ret > 0)
+			{
+				pMsg[ret - 1] = 0;
+				// printf("recv msg %s\n", pMsg);
+				net_socket_write(ns, nd, pMsg, ret);
+				free(pMsg);
+			}
+			else
+			{
+				// create lager buff，read again
+				printf("recv error %d\n", ret);
+				break;
+			}
 		}
-		else
+	}
+	else if(v == RECV_BUFF_USE_BUFF)
+	{
+		while((ret = net_socket_read(ns, nd, buff, sizeof(buff)/sizeof(buff[0]))) > 0)
 		{
-			// create lager buff，read again
-			break;
+			if(ret < (int)(sizeof(buff)/sizeof(buff[0])) )
+			{
+				buff[ret - 1] = 0;
+				// printf("recv msg %s\n", buff);
+				net_socket_write(ns, nd, buff, ret);
+			}
+			else
+			{
+				// create lager buff，read again
+				break;
+			}
 		}
 	}
 }
@@ -56,6 +83,7 @@ int main(int argc, char** argv)
 	net_socket nd;
 	struct net_config cfg;
 	int count;
+	int v;
 
 	pool = buff_pool_create(1024, 64);
 	if(!pool)
@@ -71,7 +99,7 @@ int main(int argc, char** argv)
 		exit(-1);
 	}
 
-	nd = net_listen(ns, 9522, 64);
+	nd = net_listen(ns, 9524, 64);
 	if(nd == 0)
 	{
 		printf("listen faild\n");
@@ -85,8 +113,12 @@ int main(int argc, char** argv)
 
 	count = 0;
 
+	v = RECV_BUFF_USE_QUEUE;
+
+
 	while(1)
 	{
+		// net_wait(ns, 100);
 		ret = net_queue(ns, events, sizeof(events)/sizeof(events[0]));
 		if(ret < 0)
 		{
@@ -94,12 +126,12 @@ int main(int argc, char** argv)
 		}
 		if(ret == 0)
 		{
-			net_service_sleep(10);
+			net_thread_sleep(10);
 			++count;
+			printf("-------------------------------- %d \n", net_socket_size(ns));
+			fflush(stdout);
 			if(count % 100 == 0)
-			{
-				printf("-------------------------------- %d \n", net_socket_size(ns));
-				fflush(stdout);
+			{				
 			}
 			continue;
 		}
@@ -116,6 +148,7 @@ int main(int argc, char** argv)
 					cfg.read_buff_cnt = 8;
 					cfg.write_buff_cnt = 8;
 					cfg.pool = pool;
+					cfg.read_buff_version = v;
 
 					if(net_socket_cfg(ns, nd, &cfg) < 0)
 					{
@@ -125,7 +158,7 @@ int main(int argc, char** argv)
 					{
 						// add a client
 						// printf("recv one session %d \n", nd);
-						fflush(stdout);
+						// fflush(stdout);
 					}
 				}
 				continue;
@@ -141,7 +174,8 @@ int main(int argc, char** argv)
 			
 			if(e & Eve_Read)
 			{
-				handle_client_read(ns, events[i].nd);
+
+				handle_client_read(ns, events[i].nd, v);
 			}
 		}
 

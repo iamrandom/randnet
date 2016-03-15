@@ -7,6 +7,7 @@
 //#define NET_WIN
 #ifdef NET_WIN
 
+
 #include <Windows.h>
 
 
@@ -56,7 +57,7 @@ NET_SERVICE_TYPE net_create_service_fd(int size)
 }
 
 volatile net_atomic_flag init_lock = NET_ATOMIC_FLAG_INIT;
-volatile net_atomic_int init_cnt = NET_ATOMIC_FLAG_INIT;
+volatile int init_cnt = 0;
 
 int
 net_init()
@@ -66,7 +67,7 @@ net_init()
 
 	version = MAKEWORD(2, 2);
 	net_lock(&init_lock);
-	if(0 == net_atomic_load(&init_cnt))
+	if(0 == init_cnt)
 	{
 		if(0 != WSAStartup(version, &wsa_data))
 		{
@@ -80,8 +81,7 @@ net_init()
 			return 0;
 		}
 	}
-
-	net_atomic_fetch_add(&init_cnt, 1);
+	++init_cnt;
 	net_unlock(&init_lock);
 	return 1;
 }
@@ -90,11 +90,11 @@ void
 net_cleanup()
 {
 	net_lock(&init_lock);
-	if(1 == net_atomic_load(&init_cnt))
+	if(1 == init_cnt)
 	{
 		WSACleanup();
 	}
-	net_atomic_fetch_sub(&init_cnt, 1);
+	--init_cnt;
 	net_unlock(&init_lock);
 }
 
@@ -173,6 +173,13 @@ create_accept_session()
 	memset(asession, 0, sizeof(struct accept_session));
 	return asession;
 }
+
+// #include <stdio.h>
+// #include <time.h>
+
+#define print_error()
+	// printf("error: %s:%d    %s %d %d\n", __FILE__, __LINE__, __FUNCTION__, net_get_error(), (int)clock());
+	// fflush(stdout);
 
 
 
@@ -407,6 +414,7 @@ post_read(struct net_service* service, struct net_session* session)
 		{
 			return 0;
 		}
+	
 		err = recv(session->fd, (char*)data, (int)size, 0);
 		msgcnt = recv_buff_consume(rsession->rbuff, err < 0? 0 : (size_t)err);
 		if (err > 0)
@@ -416,10 +424,18 @@ post_read(struct net_service* service, struct net_session* session)
 				// notify only have new msg
 				push_queue(service, session, Eve_Read);
 			}
+			else if(msgcnt < 0)
+			{
+				// error happend
+				print_error();
+				push_queue(service, session, Eve_Error);
+				return 0;
+			}
 		}
 		else if (err == 0)
 		{
 			// socket closed
+			print_error();
 			push_queue(service, session, Eve_Error);
 			return 0;
 		}
@@ -429,6 +445,7 @@ post_read(struct net_service* service, struct net_session* session)
 			{
 				break;
 			}
+			print_error();
 			push_queue(service, session, Eve_Error);
 			return 0;
 		}
@@ -667,6 +684,7 @@ handle_write(struct net_service* service, int ret, int err, struct write_session
 	if(ret < 0)
 	{
 		events |= Eve_Error;
+		print_error();
 	}
 
 	if (!events || push_queue(service, session, events) > 0)
@@ -712,6 +730,7 @@ handle_read(struct net_service* service, int ret, int err, struct read_session* 
 	if((!ret && err) || post_read(service, session) )
 	{
 		events |= Eve_Error;
+		print_error();
 	}
 	push_queue(service, session, events);
 	net_unlock(&service->session_lock[index]);
@@ -733,6 +752,7 @@ handle_connect(struct net_service* service, int ret, int err, struct connect_ses
 
 	if(!ret && err)
 	{
+		print_error();
 		push_queue_with_lock(service, csession->id, Eve_Connect | Eve_Error);
 		release_connect_session(csession);
 		return;
@@ -1005,6 +1025,7 @@ net_socket_close(struct net_service* service, net_socket nd, char send_rest)
 	}
 	else
 	{
+		shutdown(session->fd, SD_BOTH);
 		net_close_fd(session->fd);
 	}
 	release_net_session(session);
@@ -1015,12 +1036,6 @@ net_socket_close(struct net_service* service, net_socket nd, char send_rest)
 	net_unlock(&service->id_lock);
 }
 
-
-NET_API void
-net_service_sleep(long ms)
-{
-	Sleep(ms);
-}
 
 #endif
 

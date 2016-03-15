@@ -15,13 +15,6 @@
 #include "buff.h"
 #include "net_service.h"
 
-#if defined(WIN32) || defined(_WIN32_WINNT)
-#define NET_WIN
-#endif
-
-#ifdef __linux
-#define NET_LINUX
-#endif
 
 #ifdef NET_WIN
 #include <winsock2.h>
@@ -47,6 +40,7 @@ struct system_data
 #define system_session_define(m)	struct system_data m;
 
 #else
+
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <netinet/in.h>
@@ -246,7 +240,7 @@ release_read_session(struct read_session* rsession)
 }
 
 struct read_session*
-create_read_session(enum EnByteSize en_byte, uint16_t pool_cnt, struct buff_pool* pool)
+create_read_session(enum EnByteSize en_byte, uint16_t pool_cnt, struct buff_pool* pool, int version)
 {
 	struct read_session* rsession;
 	rsession = (struct read_session*)malloc(sizeof(struct read_session));
@@ -255,7 +249,7 @@ create_read_session(enum EnByteSize en_byte, uint16_t pool_cnt, struct buff_pool
 		return 0;
 	}
 	memset(rsession, 0, sizeof(struct read_session));
-	rsession->rbuff = recv_buff_create(en_byte, pool_cnt, pool);
+	rsession->rbuff = recv_buff_create(en_byte, pool_cnt, pool, version);
 	if(!rsession->rbuff )
 	{
 		release_read_session(rsession);
@@ -502,8 +496,8 @@ net_socket_cfg(struct net_service* service, net_socket nd, struct net_config* co
 		net_unlock(&service->session_lock[index]);
 		return -3;
 	}
-
-	session->rsession = create_read_session(config->enByte, config->read_buff_cnt, config->pool);
+	
+	session->rsession = create_read_session(config->enByte, config->read_buff_cnt, config->pool, config->read_buff_version);
 	if(!session->rsession)
 	{
 		net_unlock(&service->session_lock[index]);
