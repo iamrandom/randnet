@@ -29,7 +29,7 @@
  #define net_thread_sleep(ms) usleep((ms * 1000))
  #endif
 
-#if !defined(ATOMIC_CPP11) || !defined(ATOMIC_C11)
+#if !defined(ATOMIC_CPP11) && !defined(ATOMIC_C11)
 
 #ifdef __cplusplus
  	#define ATOMIC_CPP11
