@@ -26,7 +26,8 @@
 
  #ifdef NET_LINUX
  #include <unistd.h>
- #define net_thread_sleep(ms) usleep((ms * 1000))
+ // #define net_thread_sleep(ms) usleep((ms * 1000))
+ #define net_thread_sleep(ms)  {struct timespec ts; ts.tv_sec= ((ms)/1000); ts.tv_nsec=((ms)%1000) * 1000000; nanosleep(&ts, 0);}
  #endif
 
 #if !defined(ATOMIC_CPP11) && !defined(ATOMIC_C11)
