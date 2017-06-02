@@ -5,9 +5,6 @@
  *      Author: Random
  */
 
-#ifndef BUFF_C_
-#define BUFF_C_
-
 #include <stdlib.h>
 #include <assert.h>
 #include <string.h>
@@ -15,6 +12,9 @@
 #include "net_atomic.h"
 #include "buff.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 unsigned int
 buff_get_space(unsigned short pool_cnt, unsigned short buffer_size,
@@ -1065,7 +1065,6 @@ msg_buff_write(struct msg_buff* mbuff, const void* msg)
 	if(uWrite == uRead)
 	{
 		net_unlock(&mbuff->wflag);
-	
 		return 0;
 	}
 	if(!mbuff->buffers[uHWrite % pool_cnt])
@@ -1167,9 +1166,10 @@ msg_buff_size(struct msg_buff* mbuff)
 }
 
 
+#ifdef __cplusplus
+}
+#endif
 
 
-
-#endif /* BUFF_C_ */
 
 

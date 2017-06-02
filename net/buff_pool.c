@@ -5,10 +5,13 @@
  *      Author: Random
  */
 
- #include <stdlib.h>
- #include "buff_pool.h"
+#include <stdlib.h>
+#include "buff_pool.h"
 #include "net_atomic.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 struct buff_pool
 {
@@ -129,4 +132,6 @@ buff_pool_max_cnt(struct buff_pool* pool)
 }
 
 
-
+#ifdef __cplusplus
+}
+#endif

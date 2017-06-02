@@ -3,6 +3,10 @@
 #include <string.h>
 #include "sbtree.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 void sb_tree_clean(struct sbtree_node** pnode)
 {
 	if (!pnode || !(*pnode))
@@ -327,5 +331,9 @@ sb_tree_size(struct sbtree_node* root)
 //	sb_tree_print_node(root, 0, 1);
 //}
 
+
+#ifdef __cplusplus
+}
+#endif
 
 

@@ -9,14 +9,7 @@
 
 #include <stdlib.h>
 #include <errno.h>
-#include <sys/socket.h>
 #include <sys/epoll.h>
-#include <arpa/inet.h>
-
-#include "net_atomic.h"
-#include "../tool/ffid.h"
-#include "buff.h"
-#include "net_service.h"
 
 
 #define Handle_EPOLLOUT 1 << 4
@@ -24,16 +17,11 @@
 #define Handle_socket_close 1 << 6
 #define EPOLLERR_EPOLLHUP 1 << 7
 #define WriteError 1 << 8
- #define Handle_socket_consume_error 1 << 9
+#define Handle_socket_consume_error 1 << 9
 
 #define OP_NET_READ				EPOLLIN
 #define OP_NET_WRITE 			EPOLLOUT
 
- struct listen_session
-{
-	unsigned short				port;
-	unsigned short				listen_cnt;
-};
 
 #include <signal.h>
  int net_init()
@@ -73,14 +61,12 @@ NET_SERVICE_TYPE net_create_service_fd(int size)
 
 int epoll_ctl_op(int epfd, struct net_session* session, int op)
 {
-	// only call by post_read and post_write
 	struct epoll_event event;
 	int ev;
 	int err;
 
 	if(!session) return -1;
 	ev = 0;
-
 
 	if(session->rsession)
 	{
@@ -164,6 +150,7 @@ post_rest_write(struct net_service* service, struct net_session* session)
 			if(errno == EAGAIN )
 			{
 				//fd buffer is full
+				session->wsession->etflag = 1;
 				return errno;
 			}
 			else
@@ -176,7 +163,6 @@ post_rest_write(struct net_service* service, struct net_session* session)
 			send_buff_consume(wsession->sbuff, ret);
 		}
 	}
-	session->wsession->etflag = 1;
 	return 0;
 }
 
@@ -209,14 +195,14 @@ post_rest_read(struct net_service* service, struct net_session* session)
 		{
 			if(msgcnt > 0)
 			{
-				push_queue(service, session, Eve_Read);
+				push_queue(service, session, Eve_Read, net_get_error());
 			}
 			else if(msgcnt < 0)
 			{
 				// error happend
 				print_error();
 				clean_epoll_op(service, session);
-				push_queue(service, session, Handle_socket_consume_error | Eve_Error);
+				push_queue(service, session, Handle_socket_consume_error | Eve_Error, net_get_error());
 				return;
 			}
 		}
@@ -225,7 +211,7 @@ post_rest_read(struct net_service* service, struct net_session* session)
 			// socket closed
 			print_error();
 			clean_epoll_op(service, session);
-			push_queue(service, session, Handle_socket_close | Eve_Error);
+			push_queue(service, session, Handle_socket_close | Eve_Error, net_get_error());
 			break;
 		}
 		else
@@ -235,7 +221,7 @@ post_rest_read(struct net_service* service, struct net_session* session)
 			{
 				print_error();
 				clean_epoll_op(service, session);
-				push_queue(service, session, Handle_get_error | Eve_Error);
+				push_queue(service, session, Handle_get_error | Eve_Error, err);
 			}
 			break;
 		}
@@ -271,7 +257,7 @@ post_read(struct net_service* service, struct net_session* session)
 	if(epoll_ctl_op(service->net_service_fd, session, OP_NET_READ))
 	{
 		print_error();
-		push_queue(service, session, Eve_Read | Eve_Error);
+		push_queue(service, session, Eve_Read | Eve_Error, net_get_error());
 		clean_epoll_op(service, session);
 	}
 	else
@@ -280,6 +266,7 @@ post_read(struct net_service* service, struct net_session* session)
 	}
 	return 1;
 }
+
 
 // post a write op
 int 
@@ -314,7 +301,7 @@ post_write(struct net_service* service, struct net_session* session)
 	{
 		wsession->op = OP_NET_NONE;
 		print_error();
-		push_queue(service, session, WriteError | Eve_Error);
+		push_queue(service, session, WriteError | Eve_Error, net_get_error());
 		clean_epoll_op(service, session);
 
 	}
@@ -384,12 +371,10 @@ handle_session(struct net_service* service, struct net_session* session, int eve
 		error = 1;
 	}
 
-	// printf("%d %d %d %d %d %d %d\n", session->id, session->events, error, events & EPOLLERR, events & EPOLLHUP, events & EPOLLOUT, events & EPOLLIN);
-	// fflush(stdout);
 	if(session->lsession)
 	{
 		// listen session
-		push_queue(service, session, Eve_Accept);
+		push_queue(service, session, Eve_Accept, 0);
 		return;
 	}
 
@@ -402,7 +387,7 @@ handle_session(struct net_service* service, struct net_session* session, int eve
 	{
 		print_error();
 		clean_epoll_op(service, session);
-		push_queue(service, session, event | EPOLLERR_EPOLLHUP | Eve_Error);
+		push_queue(service, session, event | EPOLLERR_EPOLLHUP | Eve_Error, net_get_error());
 		return;
 	}
 
@@ -413,14 +398,14 @@ handle_session(struct net_service* service, struct net_session* session, int eve
 			if (( 0 == getsockopt(session->fd, SOL_SOCKET, SO_ERROR, &error, &len) )) {
 				if( 0 == error ) {
 					clean_epoll_op(service, session);
-					push_queue(service, session, Eve_Connect);
+					push_queue(service, session, Eve_Connect, 0);
 					return;
 				}
 			}
 			// maybe error
 			print_error();
 			clean_epoll_op(service, session);
-			push_queue(service, session, Eve_Connect | Eve_Error);
+			push_queue(service, session, Eve_Connect | Eve_Error, net_get_error());
 		}
 		return;
 	}
@@ -433,7 +418,7 @@ handle_session(struct net_service* service, struct net_session* session, int eve
 		{
 			print_error();
 			clean_epoll_op(service, session);
-			push_queue(service, session, Handle_EPOLLOUT | Eve_Error);
+			push_queue(service, session, Handle_EPOLLOUT | Eve_Error, err);
 		}
 		else if(err == 0)
 		{
@@ -463,7 +448,6 @@ net_wait(struct net_service* service, int timeout)
 	int cnt;
 	int wait_cnt;
 	int i;
-	int try_cnt;
 	ffid_vtype id;
 	struct epoll_event events[32];
 	struct net_session* session;
@@ -473,7 +457,7 @@ net_wait(struct net_service* service, int timeout)
 
 	cnt = 0;
 
-	while((wait_cnt = epoll_wait(service->net_service_fd, events, sizeof(events)/sizeof(events[0]), timeout)))
+	wait_cnt = epoll_wait(service->net_service_fd, events, sizeof(events)/sizeof(events[0]), timeout);
 	{
 		if(wait_cnt < 0) return wait_cnt;
 		cnt += wait_cnt;
@@ -540,22 +524,118 @@ create_listen_session(struct net_service* service, unsigned short port, unsigned
 	return lsession;
 }
 
+// NET_API net_socket
+// net_listen(struct net_service* service, const char* host,unsigned short port, unsigned short listen_cnt)
+// {
+// 	int listen_socket;
+// 	int opt;
+// 	struct sockaddr_in listen_addr;
+// 	struct epoll_event ev;
+// 	struct net_session* session;
+// 	int ret;
+// 	ffid_vtype id;
+
+// 	listen_socket = create_socket();
+// 	if(listen_socket < 0)
+// 	{
+// 		// printf("listen error step 0 %d\n", ret);
+// 		// perror("info:");
+// 		return 0;
+// 	}
+// 	opt = 1;
+// 	// listen socket reuse
+// 	setsockopt(listen_socket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+// 	ctl_socket_async(listen_socket);
+
+// 	listen_addr.sin_family = AF_INET;
+// 	listen_addr.sin_port = htons(port);
+// 	listen_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+// 	if((ret = bind(listen_socket, (struct sockaddr*)&listen_addr, sizeof(listen_addr))))
+// 	{
+// 		ret = net_get_error();
+// 		// printf("listen error step 1 %d\n", ret);
+// 		// perror("info:");
+// 		net_close_fd(listen_socket);
+
+// 		return 0;
+// 	}
+
+// 	if((ret = listen(listen_socket, listen_cnt)))
+// 	{
+// 		ret = net_get_error();
+// 		// printf("listen error step 2 %d\n", ret);
+// 		// perror("info:");
+// 		net_close_fd(listen_socket);
+// 		return 0;
+// 	}
+
+// 	session = create_net_session();
+// 	if(!session)
+// 	{
+// 		// printf("listen error step 3\n");
+// 		net_close_fd(listen_socket);
+// 		return 0;
+// 	}
+// 	session->fd = listen_socket;
+// 	session->lsession = create_listen_session(service, port, listen_cnt);
+// 	if(!session->lsession)
+// 	{
+// 		// printf("listen error step 4 \n");
+// 		release_net_session(session);
+// 		net_close_fd(listen_socket);
+// 		return 0;
+// 	}
+
+// 	id = add_net_session(service, session);
+// 	if(!id)
+// 	{
+// 		// printf("listen error step 5 \n");
+// 		release_net_session(session);
+// 		net_close_fd(listen_socket);
+// 		return 0;
+// 	}
+
+// 	memset(&ev, 0, sizeof(ev));
+// 	ev.events = EPOLLIN | EPOLLOUT | EPOLLET;
+// 	ev.data.u64 = session->id;
+// 	if((ret = epoll_ctl(service->net_service_fd, EPOLL_CTL_ADD, listen_socket, &ev)))
+// 	{
+// 		ret = net_get_error();
+// 		// printf("listen error step 6 %d\n", ret);
+// 		// perror("info:");
+// 		net_socket_close_print_error();
+// 		net_socket_close(service, id, 0);
+// 		return 0;
+// 	}
+// 	return id;
+// }
+
 NET_API net_socket
-net_listen(struct net_service* service, unsigned short port, unsigned short listen_cnt)
+net_listen(struct net_service* service, const char* host,unsigned short port, unsigned short listen_cnt)
 {
 	int listen_socket;
 	int opt;
-	struct sockaddr_in listen_addr;
 	struct epoll_event ev;
 	struct net_session* session;
 	int ret;
 	ffid_vtype id;
+	struct net_addr addr;
 
-	listen_socket = create_socket();
+	if(net_addr_help(&addr, host, port, AF_UNSPEC, AI_PASSIVE))
+	{
+		ret = net_get_error();
+		printf("listen error step -1 %d\n", ret);
+		perror("info:");
+		return 0;
+	}
+
+	listen_socket = socket(addr.ai_list->ai_family, addr.ai_list->ai_socktype, addr.ai_list->ai_protocol);
 	if(listen_socket < 0)
 	{
-		// printf("listen error step 0 %d\n", ret);
-		// perror("info:");
+		ret = net_get_error();
+		printf("listen error step 0 %d\n", ret);
+		perror("info:");
+		free_net_addr(&addr);
 		return 0;
 	}
 	opt = 1;
@@ -563,14 +643,14 @@ net_listen(struct net_service* service, unsigned short port, unsigned short list
 	setsockopt(listen_socket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 	ctl_socket_async(listen_socket);
 
-	listen_addr.sin_family = AF_INET;
-	listen_addr.sin_port = htons(port);
-	listen_addr.sin_addr.s_addr = htonl(INADDR_ANY);
-	if((ret = bind(listen_socket, (struct sockaddr*)&listen_addr, sizeof(listen_addr))))
+	if((ret = bind(listen_socket, addr.ai_list->ai_addr, addr.ai_list->ai_addrlen)))
 	{
+		free_net_addr(&addr);
 		ret = net_get_error();
-		// printf("listen error step 1 %d\n", ret);
-		// perror("info:");
+		// bug will return error 22
+		// https://bugzilla.redhat.com/show_bug.cgi?id=448069
+		printf("listen error step 1 %d\n", ret);
+		perror("info:");
 		net_close_fd(listen_socket);
 
 		return 0;
@@ -578,17 +658,21 @@ net_listen(struct net_service* service, unsigned short port, unsigned short list
 
 	if((ret = listen(listen_socket, listen_cnt)))
 	{
+		free_net_addr(&addr);
 		ret = net_get_error();
-		// printf("listen error step 2 %d\n", ret);
-		// perror("info:");
+		printf("listen error step 2 %d\n", ret);
+		perror("info:");
 		net_close_fd(listen_socket);
 		return 0;
 	}
 
 	session = create_net_session();
+	session->ai_family = addr.ai_list->ai_family;
+
 	if(!session)
 	{
-		// printf("listen error step 3\n");
+		free_net_addr(&addr);
+		printf("listen error step 3\n");
 		net_close_fd(listen_socket);
 		return 0;
 	}
@@ -596,16 +680,18 @@ net_listen(struct net_service* service, unsigned short port, unsigned short list
 	session->lsession = create_listen_session(service, port, listen_cnt);
 	if(!session->lsession)
 	{
-		// printf("listen error step 4 \n");
+		free_net_addr(&addr);
+		printf("listen error step 4 \n");
 		release_net_session(session);
 		net_close_fd(listen_socket);
 		return 0;
 	}
-
+	sockaddr_ip_port(addr.ai_list->ai_addr, session->lsession->ip, &(session->lsession->port));
+	free_net_addr(&addr);
 	id = add_net_session(service, session);
 	if(!id)
 	{
-		// printf("listen error step 5 \n");
+		printf("listen error step 5 \n");
 		release_net_session(session);
 		net_close_fd(listen_socket);
 		return 0;
@@ -617,8 +703,8 @@ net_listen(struct net_service* service, unsigned short port, unsigned short list
 	if((ret = epoll_ctl(service->net_service_fd, EPOLL_CTL_ADD, listen_socket, &ev)))
 	{
 		ret = net_get_error();
-		// printf("listen error step 6 %d\n", ret);
-		// perror("info:");
+		printf("listen error step 6 %d\n", ret);
+		perror("info:");
 		net_socket_close_print_error();
 		net_socket_close(service, id, 0);
 		return 0;
@@ -663,7 +749,7 @@ net_accept(struct net_service* service, net_socket nd)
 	net_unlock(&service->session_lock[index]);
 
 	new_session->fd = fd;
-
+	new_session->ai_family = session->ai_family;
 	id = add_net_session(service, new_session);
 	if(!id)
 	{
@@ -678,43 +764,46 @@ NET_API net_socket
 net_connect(struct net_service* service, const char* ip, unsigned short port)
 {
 	int connect_socket;
-	struct sockaddr_in connect_addr;
 	struct epoll_event ev;
 	struct net_session* session;
 	int ret;
 	ffid_vtype id;
 
-	connect_socket = create_socket();
+	struct net_addr addr;
+	if(!ip || net_addr_help(&addr, ip, port, AF_UNSPEC, 0))
+	{
+		return 0;
+	}
+	connect_socket = socket(addr.ai_list->ai_family, addr.ai_list->ai_socktype, addr.ai_list->ai_protocol);
 	if(connect_socket < 0)
 	{
+		free_net_addr(&addr);
 		return 0;
 	}
 	ctl_socket_async(connect_socket);
 
-
 	session = create_net_session();
 	if(!session)
 	{
+		free_net_addr(&addr);
 		net_close_fd(connect_socket);
 		return 0;
 	}
 	session->fd = connect_socket;
 	session->connect_flag = 1;
+	session->ai_family = addr.ai_list->ai_family;
 
 	id = add_net_session(service, session);
 	if(!id)
 	{
+		free_net_addr(&addr);
 		release_net_session(session);
 		net_close_fd(connect_socket);
 		return 0;
 	}
 
-	memset(&connect_addr, 0, sizeof(connect_addr));
-	connect_addr.sin_family = AF_INET;
-	connect_addr.sin_addr.s_addr = inet_addr(ip);
-	connect_addr.sin_port = htons(port);
-
-	ret = connect(connect_socket, (struct sockaddr*)&connect_addr, sizeof(connect_addr));
+	ret = connect(connect_socket, addr.ai_list->ai_addr, (int)addr.ai_list->ai_addrlen);
+	free_net_addr(&addr);
 	if(ret < 0)
 	{
 		ret = net_get_error();

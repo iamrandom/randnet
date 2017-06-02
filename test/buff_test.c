@@ -76,7 +76,8 @@ int main(int argc, char** argv)
 				break;
 			}
 		}
-				for(j = 0; j < (rand()%8); ++j)
+		
+		for(j = 0; j < (rand()%8); ++j)
 		{
 			pMsg = 0;
 			msg_len = recv_buff_read(rbuff, (void*)&pMsg, sizeof(pMsg));

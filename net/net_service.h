@@ -10,6 +10,9 @@
 
 #include "buff.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 #define ERROR_NET_SOCKET 0
 
@@ -71,6 +74,13 @@ net_close(struct net_service* service);
 **/
 NET_API int							
 net_wait(struct net_service* service, int timeout);
+
+/**
+ * delay send socket data
+ * max_cnt : max number of send sockets
+ */
+NET_API int                         
+net_delay(struct net_service* service, int max_cnt);
 /**
 * get events
 **/
@@ -80,7 +90,7 @@ net_queue(struct net_service* service, struct net_event * events, int maxevents)
 * listen port，you can listen some port use the same net_service
 **/
 NET_API net_socket					
-net_listen(struct net_service* service, unsigned short port, unsigned short listen_cnt);
+net_listen(struct net_service* service, const char* host,  unsigned short port, unsigned short backlog);
 /**
 * if listening socket have Eve_Accept event , call this function you can get a client net_socket
 **/
@@ -117,7 +127,7 @@ net_socket_read(struct net_service* service, net_socket nd, void* buff, int usiz
 * if the net_socket's write_buff not enough, it will send faild
 **/
 NET_API int							
-net_socket_write(struct net_service* service, net_socket nd, const void* buff, int usize);
+net_socket_write(struct net_service* service, net_socket nd, const void* buff, int usize, char delay);
 /**
 * ctl you param data, if data is null, will return the data current ctl
 */
@@ -129,6 +139,21 @@ net_socket_ctl(struct net_service* service, net_socket nd, param_type* data);
 NET_API int							
 net_socket_size(struct net_service* service);
 
+/**
+ * get socket ip and port
+ */
+NET_API int
+net_socket_ip_port(struct net_service* service, net_socket nd, char* ip, unsigned short* port);
+
+NET_API int 
+net_socket_error(struct net_service* service, net_socket nd);
+
+NET_API int 
+net_error(struct net_service* service);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* NET_SERVICE_H_ */
 

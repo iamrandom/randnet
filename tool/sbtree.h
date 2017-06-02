@@ -3,7 +3,13 @@
 #define _SBTREE_H
 
 // a size balance tree
-typedef unsigned int	sb_tree_key;
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+typedef unsigned long long	sb_tree_key;
+
 typedef union
 {
 	void				*ptr;
@@ -50,6 +56,11 @@ sb_tree_size(struct sbtree_node* root);
 
 void								
 sb_tree_print(struct sbtree_node* root);
+
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif
 

@@ -1,6 +1,8 @@
 
 
 
+
+
 #include <stdio.h>
 #include <stdlib.h>
 #include "../net/net_atomic.h"
@@ -9,6 +11,37 @@
 
 #include "pthread.h"
 
+net_atomic_flag plock;
+
+int delay = 1;
+
+void println(const char* msg, int arg0)
+{
+	net_lock(&plock);
+	printf("%s %d \n", msg, arg0);
+	fflush(stdout);
+	net_unlock(&plock);
+}
+
+
+void*
+thread_run_delay(void* param)
+{
+	struct net_service* ns;
+	ns = (struct net_service*)param;
+	int cnt;
+
+	while(1)
+	{
+		cnt = net_delay(ns, 1024);
+		if(cnt == 0)
+		{
+			net_thread_sleep(10);
+		}
+	}
+	
+	return 0;
+}
 
 void*
 thread_run(void* param)
@@ -27,9 +60,7 @@ void handle_client_read(struct net_service* ns, net_socket nd, int v)
 {
 	char buff[1024];
 	int ret;
-	char* pMsg;
-
-	
+	char* pMsg;	
 
 	if (v == RECV_BUFF_USE_QUEUE)
 	{
@@ -40,13 +71,13 @@ void handle_client_read(struct net_service* ns, net_socket nd, int v)
 			{
 				pMsg[ret - 1] = 0;
 				// printf("recv msg %s\n", pMsg);
-				net_socket_write(ns, nd, pMsg, ret);
+				net_socket_write(ns, nd, pMsg, ret, delay);
 				free(pMsg);
 			}
 			else
 			{
 				// create lager buff，read again
-				printf("recv error %d\n", ret);
+				println("recv error ", ret);
 				break;
 			}
 		}
@@ -59,7 +90,7 @@ void handle_client_read(struct net_service* ns, net_socket nd, int v)
 			{
 				buff[ret - 1] = 0;
 				// printf("recv msg %s\n", buff);
-				net_socket_write(ns, nd, buff, ret);
+				net_socket_write(ns, nd, buff, ret, delay);
 			}
 			else
 			{
@@ -74,6 +105,7 @@ int main(int argc, char** argv)
 {
 	struct net_service* ns;
 	pthread_t ts[2];
+	pthread_t sss;
 	struct net_event events[64];
 	struct buff_pool* pool;
 	int i;
@@ -84,8 +116,17 @@ int main(int argc, char** argv)
 	struct net_config cfg;
 	int count;
 	int v;
+	char ip[128];
+	unsigned short port;
+	int family;
 
-	pool = buff_pool_create(1024, 64);
+	if(argc < 2)
+	{
+		return 0;
+	}
+
+	net_atomic_flag_clear(&plock);
+	pool = buff_pool_create(1024, 5);
 	if(!pool)
 	{
 		printf("buff_pool_create faild\n");
@@ -98,18 +139,28 @@ int main(int argc, char** argv)
 		printf("open net_service faild\n");
 		exit(-1);
 	}
-
-	nd = net_listen(ns, 9524, 64);
+	// "fe80::bcb6:524f:4a73:234f"
+	nd = net_listen(ns, argv[1], 9524, 64);
 	if(nd == 0)
 	{
-		printf("listen faild\n");
+		printf("listen faild %d\n", net_error(ns));
 		exit(-1);
 	}
+
+	family = net_socket_ip_port(ns, nd, ip, &port);
+
+	printf("listen %d  %s :  %d \n",  family, ip, port);
 
 	for(i = 0; i < (int)(sizeof(ts)/sizeof(ts[0])); ++i)
 	{
 		pthread_create(ts + i, 0, thread_run, ns);
 	}
+	if(delay)
+	{
+		pthread_create(&sss, 0, thread_run_delay, ns);
+	}
+	
+	
 
 	count = 0;
 
@@ -130,9 +181,6 @@ int main(int argc, char** argv)
 			++count;
 			printf("-------------------------------- %d \n", net_socket_size(ns));
 			fflush(stdout);
-			if(count % 100 == 0)
-			{				
-			}
 			continue;
 		}
 
@@ -156,9 +204,17 @@ int main(int argc, char** argv)
 					}
 					else
 					{
-						// add a client
-						// printf("recv one session %d \n", nd);
-						// fflush(stdout);
+						char ip[64];
+						ip[0] = 0;
+						unsigned short port = 0;
+						int family = net_socket_ip_port(ns, nd, ip, &port);
+						if(family)
+						{
+								// add a client
+							printf("recv one session %d family(%d), ip(%s)  port(%d) \n",family, nd, ip, port);
+							fflush(stdout);
+						}
+					
 					}
 				}
 				continue;
@@ -166,15 +222,14 @@ int main(int argc, char** argv)
 
 			if(e & Eve_Error)
 			{
-				printf("socket close %d\n", events[i].nd);
-				fflush(stdout);
+				// printf("socket close %d\n", events[i].nd);
+				// fflush(stdout);
 				net_socket_close(ns, events[i].nd, 0);
 				continue;
 			}
 			
 			if(e & Eve_Read)
 			{
-
 				handle_client_read(ns, events[i].nd, v);
 			}
 		}
@@ -185,6 +240,11 @@ int main(int argc, char** argv)
 	{
 		pthread_join(ts[i], &status);
 	}
+	if(delay)
+	{
+		pthread_join(sss,  &status);
+	}
+	
 	net_close(ns);
 	buff_pool_release(pool);
 	return 0;

@@ -26,19 +26,22 @@
 
  #ifdef NET_LINUX
  #include <unistd.h>
+#include <time.h>
  // #define net_thread_sleep(ms) usleep((ms * 1000))
  #define net_thread_sleep(ms)  {struct timespec ts; ts.tv_sec= ((ms)/1000); ts.tv_nsec=((ms)%1000) * 1000000; nanosleep(&ts, 0);}
  #endif
 
 #if !defined(ATOMIC_CPP11) && !defined(ATOMIC_C11)
-
-#ifdef __cplusplus
- 	#define ATOMIC_CPP11
-#else
- 	#define ATOMIC_C11
+#  ifdef __cplusplus
+#    if __cplusplus >= 201103L // c++ 11
+#      define ATOMIC_CPP11
+#    endif
+#  else
+#    if __STDC_VERSION__ >= 201112L  // c11
+#      define ATOMIC_C11
+#    endif
+#  endif
 #endif
-
- #endif
 
 #ifdef ATOMIC_CPP11
 #include <atomic>
@@ -61,9 +64,9 @@ using namespace std;
 #define net_atomic_flag						atomic_flag
 #define net_atomic_flag_clear(m)			atomic_flag_clear((m))
 
-#define net_lock(m)							do{ while(atomic_flag_test_and_set(m)) { net_thread_sleep(0); acquire_memory_fence();}  acquire_memory_fence(); }while(0);
-#define net_unlock(m)						do{ release_memory_fence(); atomic_flag_clear((m)); } while(0)
+#define net_lock(m)							while(atomic_flag_test_and_set_explicit((m), memory_order_acquire)) { net_thread_sleep(0); }
 
+#define net_unlock(m)						atomic_flag_clear_explicit((m), memory_order_release)
 
 #endif //defined(ATOMIC_CPP11) || defined(ATOMIC_C11)
 

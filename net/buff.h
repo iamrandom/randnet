@@ -12,6 +12,9 @@
 #include <stdint.h>
 #include "buff_pool.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 enum EnByteSize
 {
@@ -71,7 +74,9 @@ msg_buff_size(struct msg_buff* mbuff);
 
 
 
-
+#ifdef __cplusplus
+}
+#endif
 
 
 #endif /* BUFF_H_ */

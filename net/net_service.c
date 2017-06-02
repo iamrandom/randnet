@@ -9,19 +9,29 @@
 
 
 #include <stdlib.h>
+#include <stdio.h>
 #include "net_atomic.h"
 #include "../tool/ffid.h"
 #include "../tool/sbtree.h"
+#undef sb_tree_key
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+	
 #include "buff.h"
 #include "net_service.h"
 
 
 #ifdef NET_WIN
+
 #include <winsock2.h>
 #include <mswsock.h>
 #include <Windows.h>
+#include <ws2tcpip.h>
 
 #define net_get_error WSAGetLastError
+
 #define NET_INVALID_SOCKET INVALID_SOCKET
 #define NET_SOCKET	SOCKET
 #define NET_SERVICE_TYPE	HANDLE
@@ -44,11 +54,14 @@ struct system_data
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <netinet/in.h>
+#include <netdb.h>
+#include <arpa/inet.h>
 #include <string.h>
  #include <fcntl.h>
  #include <unistd.h> 
 
-#define net_get_error()	errno
+#define net_get_error() errno
+
 #define NET_INVALID_SOCKET -1
 #define NET_SOCKET	int
 #define NET_SERVICE_TYPE	int
@@ -62,8 +75,12 @@ struct system_data
 #define OP_NET_NONE  0
 
 
-
-struct listen_session;
+struct listen_session
+{
+	char						ip[64];
+	unsigned short 				port;
+	unsigned short				listen_cnt;
+};
 
 struct read_session
 {
@@ -92,9 +109,12 @@ struct net_session
 	struct read_session*		rsession;
 	struct write_session*		wsession;
 	struct listen_session*		lsession;
-	unsigned int				events;	
 	param_type					data;
-	char						in_queue;	
+	unsigned int				events;
+	int							ai_family;
+	int 						error_info;
+	char						in_queue;
+	char						in_delay_queue;
 	char						connect_flag;
 };
 
@@ -108,24 +128,49 @@ struct net_service
 	struct buff_pool			*pool;
 	size_t						size;
 	struct msg_buff				*queue;
+	struct msg_buff				*delay_queue;
 	net_atomic_flag				close_lock;
 	struct sbtree_node*			close_root;
+	int 						error;
 };
 
 
-int net_init();
-void net_cleanup();
-void release_listen_session(struct listen_session* lsession);
+int 	net_init();
+void 	net_cleanup();
+void 	release_listen_session(struct listen_session* lsession);
 NET_SERVICE_TYPE net_create_service_fd(int size);
-int ctl_socket_async(NET_SOCKET fd);
-int post_read(struct net_service* service, struct net_session* session);
-int post_write(struct net_service* service, struct net_session* session);
+int 	ctl_socket_async(NET_SOCKET fd);
+int 	post_read(struct net_service* service, struct net_session* session);
+int 	post_write(struct net_service* service, struct net_session* session);
 
-NET_SOCKET
-create_socket()
+
+struct net_addr
 {
-	return socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+	struct addrinfo hints;
+	struct addrinfo *ai_list;
+};
+
+void free_net_addr(struct net_addr * addr)
+{
+	freeaddrinfo(addr->ai_list);
 }
+
+
+int net_addr_help(struct net_addr* addr, const char* host, unsigned short port, int ai_family, int ai_flags)
+{
+	char portstr[16];
+	sprintf(portstr, "%d", port);
+
+	memset(addr, 0, sizeof(struct net_addr));
+
+	addr->hints.ai_family = ai_family;
+	addr->hints.ai_socktype = SOCK_STREAM;
+	addr->hints.ai_protocol = IPPROTO_TCP;
+	addr->hints.ai_flags = ai_flags;
+	
+	return getaddrinfo( host, portstr, &addr->hints, &addr->ai_list);
+}
+
 
 void
 release_net_service(struct net_service* service)
@@ -157,6 +202,10 @@ release_net_service(struct net_service* service)
 	if(service->queue)
 	{
 		msg_buff_release(service->queue);
+	}
+	if(service->delay_queue)
+	{
+		msg_buff_release(service->delay_queue);
 	}
 	sb_tree_clean(&service->close_root);
 	free(service);
@@ -217,6 +266,13 @@ net_create(int size)
 	// create 4 * size queue ， if too many closed sessions's id in queue， it have space to cache the new session id
 	service->queue = msg_buff_create(sizeof(ffid_vtype), size, 4, service->pool);
 	if(!service->queue)
+	{
+		release_net_service(service);
+		return 0;
+	}
+
+	service->delay_queue = msg_buff_create(sizeof(ffid_vtype), size, 4, service->pool);
+	if(!service->delay_queue)
 	{
 		release_net_service(service);
 		return 0;
@@ -380,17 +436,39 @@ net_close(struct net_service* service)
 		net_socket_close(service, id, 0);
 	}
 	// notation there can't ensure all socket write over
-	while(service->close_root || net_wait(service, 2000) > 0);
+	while(service->close_root || net_delay(service, 1024) > 0 || net_wait(service, 2000) > 0 );
 	release_net_service(service);
 }
 
 static int
-push_queue(struct net_service* service, struct net_session* session, unsigned int event)
+push_delay_queue(struct net_service* service, struct net_session* session)
 {
-	long long s;
+	ffid_vtype s;
+	int ret;
+
+	if(session->in_delay_queue)
+	{
+		return 1;
+	}
+	s = session->id;
+	session->in_delay_queue = 1;
+	// maybe queue is full, for some closed session id in queue
+	// you'd better check if the message in queue
+	ret = msg_buff_write(service->delay_queue, &s);
+	return ret;
+}
+
+static int
+push_queue(struct net_service* service, struct net_session* session, unsigned int event, int err)
+{
+	ffid_vtype s;
 	int ret;
 
 	session->events |= event;
+	if(err)
+	{
+		session->error_info = err;
+	}
 	if(session->in_queue)
 	{
 		return 1;
@@ -405,7 +483,7 @@ push_queue(struct net_service* service, struct net_session* session, unsigned in
 }
 
 int
-push_queue_with_lock(struct net_service* service, net_socket nd, unsigned int event)
+push_queue_with_lock(struct net_service* service, net_socket nd, unsigned int event, int err)
 {
 	struct net_session* session;
 	unsigned short index;
@@ -423,7 +501,7 @@ push_queue_with_lock(struct net_service* service, net_socket nd, unsigned int ev
 		net_unlock(&service->session_lock[index]);
 		return 0;
 	}
-	ret = push_queue(service, session, event);
+	ret = push_queue(service, session, event, err);
 	net_unlock(&service->session_lock[index]);
 	return ret;
 }
@@ -433,7 +511,7 @@ push_queue_with_lock(struct net_service* service, net_socket nd, unsigned int ev
 NET_API int
 net_queue(struct net_service* service, struct net_event * events, int maxevents)
 {
-	unsigned int msg[128];
+	ffid_vtype msg[128];
 	int cnt;
 	int ret;
 	int event_index;
@@ -469,7 +547,6 @@ net_queue(struct net_service* service, struct net_event * events, int maxevents)
 	}
 	return event_index;
 }
-
 
 NET_API int
 net_socket_cfg(struct net_service* service, net_socket nd, struct net_config* config)
@@ -581,9 +658,8 @@ net_socket_read(struct net_service* service, net_socket nd, void* buff, int usiz
 	return ret;
 }
 
-
 NET_API int
-net_socket_write(struct net_service* service, net_socket nd, const void* buff, int usize)
+net_socket_write(struct net_service* service, net_socket nd, const void* buff, int usize, char delay)
 {
 	unsigned short index;
 	struct net_session* session;
@@ -595,7 +671,7 @@ net_socket_write(struct net_service* service, net_socket nd, const void* buff, i
 	}
 	if(!nd)
 	{
-		return -1;
+		return -2;
 	}
 	index = ffid_index(service->socket_ids, nd);
 
@@ -604,15 +680,219 @@ net_socket_write(struct net_service* service, net_socket nd, const void* buff, i
 	if(!session || session->id != nd || !session->wsession)
 	{
 		net_unlock(&service->session_lock[index]);
-		return -1;
+		return -3;
 	}
 	ret = send_buff_write(session->wsession->sbuff, buff, usize);
-	post_write(service, session);
+	if(!delay)
+	{
+		post_write(service, session);
+	}
+	else
+	{
+		push_delay_queue(service, session);
+	}
+	
 	net_unlock(&service->session_lock[index]);
 	return ret;
 }
 
+
+static int
+sockaddr_ip_port(struct sockaddr* addr, char* ip, unsigned short* port)
+{
+	char* p;
+	int ai_family;
+
+	if(!addr) return 0;
+	ai_family = addr->sa_family;
+	switch(ai_family)
+	{
+	case AF_INET:
+		if(ip)
+		{
+			p = inet_ntoa(((struct sockaddr_in*)addr)->sin_addr);
+			p[strlen(p) + 1] = 0;
+			memcpy(ip, p, strlen(p) + 1);
+		}
+		if(port)
+		{
+			*port = ntohs(((struct sockaddr_in*)addr)->sin_port);
+		}
+		return ai_family;
+	case AF_INET6:
+
+		if(ip)
+		{
+#ifdef NET_WIN
+			int buffer_index = 0;
+			int i;
+			for(i = 0; i < 16; i++)
+			{
+				if(((i-1)%2) && (i>0))
+				{
+					ip[buffer_index] = ':';
+					++buffer_index;
+				}
+				sprintf(ip + buffer_index, "%02x", ((struct sockaddr_in6 *)addr)->sin6_addr.s6_addr[i]);
+				buffer_index += 2;
+			}
+			ip[buffer_index] = 0;
+#else
+			inet_ntop(AF_INET6, (void *)&((struct sockaddr_in6*)addr)->sin6_addr, ip, sizeof(struct sockaddr_in6));
+#endif
+		}
+
+		if(port)
+		{
+			*port = ntohs(((struct sockaddr_in6 *)addr)->sin6_port);
+		}
+
+		return ai_family;
+	}
+
+	return 0;
+}
+
+NET_API int
+net_socket_ip_port(struct net_service* service, net_socket nd, char* ip, unsigned short* port)
+{
+	unsigned short index;
+	struct net_session* session;
+	struct sockaddr_in sa;
+	struct sockaddr_in6 sa6;
+	int ai_family;
+#ifdef NET_WIN
+	int len;
+#else
+	socklen_t len;
+#endif
+
+	if(!service)
+	{
+		return 0;
+	}
+	if(!nd)
+	{
+		return 0;
+	}
+	ai_family = 0;
+	index = ffid_index(service->socket_ids, nd);
+
+	net_lock(&service->session_lock[index]);
+	session = service->sessions[index];
+	if(!session || session->id != nd)
+	{
+		net_unlock(&service->session_lock[index]);
+		return 0;
+	}
+	if(session->lsession)
+	{
+		if(ip)
+		{
+			memcpy(ip, session->lsession->ip, strlen(session->lsession->ip) + 1);
+		}
+		if(port)
+		{
+			*port = session->lsession->port;
+		}
+	}
+	else
+	{
+
+		switch(session->ai_family)
+		{
+		case AF_INET:
+			len = sizeof(sa);
+			if(!getpeername(session->fd, (struct sockaddr *)&sa, &len))
+			{
+				ai_family = sockaddr_ip_port((struct sockaddr*)&sa, ip, port);
+			}
+			break;
+		case AF_INET6:
+			len = sizeof(sa6);
+			if(!getpeername(session->fd, (struct sockaddr *)&sa6, &len))
+			{
+				ai_family = sockaddr_ip_port((struct sockaddr*)&sa6, ip, port);
+			}
+			break;
+		}
+	}
+	ai_family = session->ai_family;
+	net_unlock(&service->session_lock[index]);
+	return ai_family;
+}
+
+
+NET_API int                         
+net_delay(struct net_service* service, int max_cnt)
+{
+	int i;
+	unsigned short index;
+	ffid_vtype id;
+	int cnt, ret;
+	struct net_session* session;
+	cnt = 0;
+	for(i = 0; i < max_cnt; ++i)
+	{
+		ret = msg_buff_read(service->delay_queue, &id, 1);
+		if(!ret)
+		{
+			break;
+		}
+		++cnt;
+		index = ffid_index(service->socket_ids, id);
+		net_lock(&service->session_lock[index]);
+		session = service->sessions[index];
+		if(session && session->id == id)
+		{
+			session->in_delay_queue = 0;
+			post_write(service, session);
+		}
+		net_unlock(&service->session_lock[index]);
+	}
+	return cnt;
+}
+
+NET_API int 
+net_socket_error(struct net_service* service, net_socket nd)
+{
+	unsigned short index;
+	struct net_session* session;
+
+	if(!service)
+	{
+		return 0;
+	}
+	if(!nd)
+	{
+		return 0;
+	}
+	index = ffid_index(service->socket_ids, nd);
+
+	net_lock(&service->session_lock[index]);
+	session = service->sessions[index];
+	if(!session || session->id != nd)
+	{
+		net_unlock(&service->session_lock[index]);
+		return 0;
+	}
+	net_unlock(&service->session_lock[index]);
+	return session->error_info;
+}
+
+
+
+NET_API int 
+net_error(struct net_service* service)
+{
+	if(!service) return 0;
+	return service->error;
+}
+
+
 #include "iocp_service.c"
 #include "epoll_service.c"
 
-
+#ifdef __cplusplus
+}
+#endif

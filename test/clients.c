@@ -43,7 +43,7 @@ void handle_client_read(struct net_service* ns, net_socket nd, int v)
 			{
 				// printf("recv msg %s\n", buff);
 				++msg_recv_count;
-				if( net_socket_write(ns, nd, buff, ret) > 0)
+				if( net_socket_write(ns, nd, buff, ret, 0) > 0)
 				{
 					++msg_send_count;
 				}
@@ -66,7 +66,7 @@ void handle_client_read(struct net_service* ns, net_socket nd, int v)
 			{
 				// printf("recv msg %s\n", pMsg);
 				++msg_recv_count;
-				if( net_socket_write(ns, nd, pMsg, ret) > 0)
+				if( net_socket_write(ns, nd, pMsg, ret, 0) > 0)
 				{
 					++msg_send_count;
 				}
@@ -98,6 +98,15 @@ int main(int argc, char** argv)
 	param_type parm;
 	char bf[1024];
 	int clients_cnt;
+
+	char ip[128];
+	unsigned short port;
+	int family;
+
+	if(argc < 2)
+	{
+		return 0;
+	}
 
 
 	srand((unsigned)time(NULL));
@@ -139,18 +148,26 @@ int main(int argc, char** argv)
 
 		if(ret == 0)
 		{
-			
-
 			net_thread_sleep(10);
+			if(net_socket_size(ns) >= 1024 )
+			{
+				continue;
+			}
 			++count;
 
 			// if(clients_cnt > 0) continue;
 			++clients_cnt;
-			
-			if(!net_connect(ns, "127.0.0.1", 9524))
+			//"fe80::bcb6:524f:4a73:234f"
+			if(!net_connect(ns, argv[1], 9524))
 			{
-				// printf("connect error\n");
-				// fflush(stdout);
+				printf("connect error !!!!!!!!!!!!!!!!!!!!!\n");
+				fflush(stdout);
+			}
+			else
+			{
+
+				// printf("connect ok !!!!!!!!!!!!!!!!!!!!!\n");
+				fflush(stdout);
 			}
 			
 			if(count % 100 == 0)
@@ -167,7 +184,7 @@ int main(int argc, char** argv)
 			e = events[i].events;
 			if(e & Eve_Error)
 			{
-				printf("socket error %d  %d\n", events[i].nd, e);
+				printf("socket error %d  %d  %d\n", events[i].nd, e & (~Eve_Error), net_socket_error(ns, events[i].nd));
 				fflush(stdout);
 				net_socket_close(ns, events[i].nd, 0);
 				continue;
@@ -188,11 +205,14 @@ int main(int argc, char** argv)
 				}
 				else
 				{
+					family = net_socket_ip_port(ns, events[i].nd, ip, &port);
+					// printf("connect %s %d %d success \n", ip, port, family);
+					// fflush(stdout);
 					// add a connect
 					parm = 1;
 					net_socket_ctl(ns, events[i].nd , &parm);
 					sprintf(bf, " s %d do some read write op  %d %d\n", net_socket_size(ns), rand(), rand());
-					if(net_socket_write(ns, events[i].nd, bf, strlen(bf) + 1) > 0)
+					if(net_socket_write(ns, events[i].nd, bf, strlen(bf) + 1, 0) > 0)
 					{
 						++msg_send_count;
 					}

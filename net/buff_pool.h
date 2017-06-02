@@ -15,6 +15,9 @@
 #include <stdint.h>
 #endif
 
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 struct buff_pool;
 
@@ -25,6 +28,10 @@ void*	buff_pool_new_buff(struct buff_pool* pooll, size_t buffer_size);
 void	buff_pool_del_buff(struct buff_pool* pool, void* data, size_t buffer_size);
 size_t	buff_pool_buffer_size(struct buff_pool* pool);
 size_t	buff_pool_max_cnt(struct buff_pool* pool);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* BUFF_H_ */
 
