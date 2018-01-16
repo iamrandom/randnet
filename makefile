@@ -1,18 +1,18 @@
 
 
-MODE?=64
+MODE?=32
 
 
-CC= gcc -m$(MODE) -std=c11 -o2  -O0 -Wall -fmessage-length=0  -fno-omit-frame-pointer
-CPP= g++ -m$(MODE) -std=c++11 -o2 -O0 -Wall -fmessage-length=0 -fno-omit-frame-pointer
-DFLAG?=
+CC= gcc -m$(MODE) -std=c11 -o2  -Wall -fmessage-length=0  -fno-omit-frame-pointer
+CPP= g++ -m$(MODE) -std=c++11 -o2 -Wall -fmessage-length=0 
+DFLAG?= -fno-strict-aliasing
 CC := $(CPP) $(DFLAG)
 
 
 SRC_PATH = tool:net
 INCLUDE =
 
-C_SRC_FILES = $(foreach dd,$(subst :, ,$(SRC_PATH)),$(wildcard $(dd)/*.c))
+C_SRC_FILES = $(foreach dd,$(subst :, ,$(SRC_PATH)),$(wildcard $(dd)/*.c)) 
 O_FILES = $(foreach dd, $(C_SRC_FILES), $(subst .c,.o,$(dd)))
 
 
@@ -33,15 +33,6 @@ test/epoll_test:test/epoll_test.o
 
 test/epoll_test_client:test/epoll_test_client.o
 	$(CC) $^ -o $@  -L. -ldl -lrt
-
-test/ipv6_test.exe:test/ipv6_test.o
-	$(CC)  -o $@ $^  -lws2_32 -lmswsock
-
-test/ipv6_test2:test/ipv6_test2.o
-	$(CC)  -o $@ $^  -ldl -lrt 
-
-test/ipv6_test3:test/ipv6_test3.o
-	$(CC)  -o $@ $^  -ldl -lrt 
 
 libnet_service.a: $(O_FILES)
 	ar rcs $@ $^
